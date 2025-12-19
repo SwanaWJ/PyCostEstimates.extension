@@ -45,7 +45,6 @@ Once **recipes** and **material costs** are set, just:
   ![Demo GIF](assets/PyCostEstimate_Demo_HD.gif)
 - Demo video: [assets/PyCostEstimate Demo video.mp4](assets/PyCostEstimate%20Demo%20video.mp4)
 
-
 ## Roadmap: live prices (no manual updates)
 I’m building a web scraper that pulls **real-time prices from hardware websites**, packages them into a JSON file, and feeds the extension automatically—removing manual CSV updates.  
 Preview data here: https://github.com/SwanaWJ/family-cost-data
