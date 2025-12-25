@@ -31,15 +31,30 @@ for fname in os.listdir(csv_folder):
     loaded_files.append(fname)
 
 # ---------------------------------------------------------------------
-# Load recipes
+# Load recipes (materials + labour %)
 # ---------------------------------------------------------------------
 recipes = {}
+
 with open(recipes_csv, "r") as f:
     for row in csv.DictReader(f):
         try:
-            recipes.setdefault(
-                row["Type"].strip(), {}
-            )[row["Component"].strip()] = float(row["Quantity"])
+            rtype = row["Type"].strip()
+            comp = row["Component"].strip()
+            qty = float(row["Quantity"]) if row["Quantity"] else 0.0
+            labour_val = row.get("Labour", "").strip()
+
+            recipes.setdefault(rtype, {
+                "materials": {},
+                "labour_percent": 0.0
+            })
+
+            # Labour row
+            if labour_val:
+                labour_val = labour_val.replace("%", "")
+                recipes[rtype]["labour_percent"] = float(labour_val) / 100.0
+            else:
+                recipes[rtype]["materials"][comp] = qty
+
         except:
             pass
 
@@ -47,27 +62,20 @@ with open(recipes_csv, "r") as f:
 # SAFE CATEGORY COLLECTION
 # ---------------------------------------------------------------------
 CATEGORIES = [
-    # Architectural
     DB.BuiltInCategory.OST_Walls,
     DB.BuiltInCategory.OST_Floors,
     DB.BuiltInCategory.OST_Roofs,
     DB.BuiltInCategory.OST_Ceilings,
     DB.BuiltInCategory.OST_Doors,
     DB.BuiltInCategory.OST_Windows,
-
-    # Structural
     DB.BuiltInCategory.OST_StructuralColumns,
     DB.BuiltInCategory.OST_StructuralFraming,
     DB.BuiltInCategory.OST_StructuralFoundation,
-
-    # Electrical
     DB.BuiltInCategory.OST_Conduit,
     DB.BuiltInCategory.OST_ElectricalFixtures,
     DB.BuiltInCategory.OST_ElectricalEquipment,
     DB.BuiltInCategory.OST_LightingFixtures,
     DB.BuiltInCategory.OST_LightingDevices,
-
-    # Plumbing
     DB.BuiltInCategory.OST_PlumbingFixtures,
     DB.BuiltInCategory.OST_PipeCurves,
     DB.BuiltInCategory.OST_PipeFitting,
@@ -90,7 +98,7 @@ for cat in CATEGORIES:
 materials = list(DB.FilteredElementCollector(doc).OfClass(DB.Material))
 
 # ---------------------------------------------------------------------
-# Book-keeping (detailed)
+# Book-keeping
 # ---------------------------------------------------------------------
 updated = {}
 skipped = {}
@@ -101,7 +109,7 @@ paint_updated = {}
 # TRANSACTION
 # ---------------------------------------------------------------------
 try:
-    with revit.Transaction("Update Composite & Paint Costs (All Categories)"):
+    with revit.Transaction("Update Composite & Paint Costs (With Labour)"):
 
         for elem in type_elements:
             cost_param = elem.LookupParameter("Cost")
@@ -116,19 +124,23 @@ try:
             if not tname or tname not in recipes:
                 continue
 
-            total_cost = 0.0
+            material_total = 0.0
+            labour_percent = recipes[tname]["labour_percent"]
             valid = True
 
-            for mat, qty in recipes[tname].items():
-                if not mat or mat not in material_prices:
+            for mat, qty in recipes[tname]["materials"].items():
+                if mat not in material_prices:
                     missing_materials.add(mat)
                     skipped[tname] = "missing material: {}".format(mat)
                     valid = False
                     break
-                total_cost += qty * material_prices[mat]
+                material_total += qty * material_prices[mat]
 
             if not valid:
                 continue
+
+            labour_cost = material_total * labour_percent
+            total_cost = material_total + labour_cost
 
             cost_param.Set(total_cost)
             updated[tname] = total_cost
@@ -146,12 +158,12 @@ except Exception:
     raise
 
 # ---------------------------------------------------------------------
-# DETAILED SORTED SUMMARY
+# SUMMARY
 # ---------------------------------------------------------------------
 summary = []
 
 if updated:
-    summary.append("UPDATED TYPE COSTS:")
+    summary.append("UPDATED TYPE COSTS (INCL. LABOUR):")
     for name in sorted(updated):
         summary.append("- {} : {:.2f} ZMW".format(name, updated[name]))
 
@@ -166,7 +178,7 @@ if skipped:
         summary.append("- {} ({})".format(name, skipped[name]))
 
 if missing_materials:
-    summary.append("\nMISSING MATERIALS (NOT PRICED):")
+    summary.append("\nMISSING MATERIALS:")
     for m in sorted(missing_materials):
         summary.append("- " + str(m))
 
