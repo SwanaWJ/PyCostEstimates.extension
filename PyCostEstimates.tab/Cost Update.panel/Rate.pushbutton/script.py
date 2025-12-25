@@ -44,44 +44,64 @@ with open(recipes_csv, "r") as f:
             pass
 
 # ---------------------------------------------------------------------
-# Collect SAFE element types only
+# SAFE CATEGORY COLLECTION
 # ---------------------------------------------------------------------
-SAFE_CATEGORIES = [
+CATEGORIES = [
+    # Architectural
     DB.BuiltInCategory.OST_Walls,
     DB.BuiltInCategory.OST_Floors,
     DB.BuiltInCategory.OST_Roofs,
     DB.BuiltInCategory.OST_Ceilings,
     DB.BuiltInCategory.OST_Doors,
     DB.BuiltInCategory.OST_Windows,
+
+    # Structural
     DB.BuiltInCategory.OST_StructuralColumns,
     DB.BuiltInCategory.OST_StructuralFraming,
+    DB.BuiltInCategory.OST_StructuralFoundation,
+
+    # Electrical
+    DB.BuiltInCategory.OST_Conduit,
+    DB.BuiltInCategory.OST_ElectricalFixtures,
+    DB.BuiltInCategory.OST_ElectricalEquipment,
+    DB.BuiltInCategory.OST_LightingFixtures,
+    DB.BuiltInCategory.OST_LightingDevices,
+
+    # Plumbing
+    DB.BuiltInCategory.OST_PlumbingFixtures,
+    DB.BuiltInCategory.OST_PipeCurves,
+    DB.BuiltInCategory.OST_PipeFitting,
+    DB.BuiltInCategory.OST_PipeAccessory,
 ]
 
 type_elements = []
-for cat in SAFE_CATEGORIES:
-    elems = (
-        DB.FilteredElementCollector(doc)
-        .OfCategory(cat)
-        .WhereElementIsElementType()
-        .ToElements()
-    )
-    type_elements.extend(elems)
+for cat in CATEGORIES:
+    try:
+        elems = (
+            DB.FilteredElementCollector(doc)
+            .OfCategory(cat)
+            .WhereElementIsElementType()
+            .ToElements()
+        )
+        type_elements.extend(elems)
+    except:
+        continue
 
 materials = list(DB.FilteredElementCollector(doc).OfClass(DB.Material))
 
 # ---------------------------------------------------------------------
-# Book-keeping (DETAILED)
+# Book-keeping (detailed)
 # ---------------------------------------------------------------------
-updated = {}              # {typename: cost}
-skipped = {}              # {typename: reason}
+updated = {}
+skipped = {}
 missing_materials = set()
 paint_updated = {}
 
 # ---------------------------------------------------------------------
-# TRANSACTION (SAFE)
+# TRANSACTION
 # ---------------------------------------------------------------------
 try:
-    with revit.Transaction("Update Composite & Paint Costs (Detailed)"):
+    with revit.Transaction("Update Composite & Paint Costs (All Categories)"):
 
         for elem in type_elements:
             cost_param = elem.LookupParameter("Cost")
@@ -100,7 +120,7 @@ try:
             valid = True
 
             for mat, qty in recipes[tname].items():
-                if mat not in material_prices:
+                if not mat or mat not in material_prices:
                     missing_materials.add(mat)
                     skipped[tname] = "missing material: {}".format(mat)
                     valid = False
@@ -148,17 +168,11 @@ if skipped:
 if missing_materials:
     summary.append("\nMISSING MATERIALS (NOT PRICED):")
     for m in sorted(missing_materials):
-        summary.append("- " + m)
+        summary.append("- " + str(m))
 
 if loaded_files:
     summary.append("\nCSVs LOADED:")
     for f in sorted(loaded_files):
         summary.append("- " + f)
 
-if not summary:
-    summary = ["No matching types or materials found."]
-
-forms.alert(
-    "\n".join(summary),
-    title="Composite & Paint Cost Update"
-)
+forms.alert("\n".join(summary), title="Composite & Paint Cost Update")
