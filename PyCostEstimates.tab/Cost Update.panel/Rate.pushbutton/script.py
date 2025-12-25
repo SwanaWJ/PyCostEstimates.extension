@@ -17,6 +17,8 @@ recipes_csv = os.path.join(script_dir, "recipes.csv")
 # Load material prices
 # ---------------------------------------------------------------------
 material_prices = {}
+loaded_files = []
+
 for fname in os.listdir(csv_folder):
     if not fname.endswith(".csv"):
         continue
@@ -26,6 +28,7 @@ for fname in os.listdir(csv_folder):
                 material_prices[row["Item"].strip()] = float(row["UnitCost"])
             except:
                 pass
+    loaded_files.append(fname)
 
 # ---------------------------------------------------------------------
 # Load recipes
@@ -34,17 +37,15 @@ recipes = {}
 with open(recipes_csv, "r") as f:
     for row in csv.DictReader(f):
         try:
-            recipes.setdefault(row["Type"].strip(), {})[
-                row["Component"].strip()
-            ] = float(row["Quantity"])
+            recipes.setdefault(
+                row["Type"].strip(), {}
+            )[row["Component"].strip()] = float(row["Quantity"])
         except:
             pass
 
 # ---------------------------------------------------------------------
-# Collect ONLY SAFE TYPES (NO RAW FamilySymbol)
+# Collect SAFE element types only
 # ---------------------------------------------------------------------
-type_collections = []
-
 SAFE_CATEGORIES = [
     DB.BuiltInCategory.OST_Walls,
     DB.BuiltInCategory.OST_Floors,
@@ -56,6 +57,7 @@ SAFE_CATEGORIES = [
     DB.BuiltInCategory.OST_StructuralFraming,
 ]
 
+type_elements = []
 for cat in SAFE_CATEGORIES:
     elems = (
         DB.FilteredElementCollector(doc)
@@ -63,22 +65,25 @@ for cat in SAFE_CATEGORIES:
         .WhereElementIsElementType()
         .ToElements()
     )
-    type_collections.extend(elems)
+    type_elements.extend(elems)
 
 materials = list(DB.FilteredElementCollector(doc).OfClass(DB.Material))
 
-updated = []
-skipped = []
-missing = set()
-paint_updated = []
+# ---------------------------------------------------------------------
+# Book-keeping (DETAILED)
+# ---------------------------------------------------------------------
+updated = {}              # {typename: cost}
+skipped = {}              # {typename: reason}
+missing_materials = set()
+paint_updated = {}
 
 # ---------------------------------------------------------------------
-# TRANSACTION (VERY CONTROLLED)
+# TRANSACTION (SAFE)
 # ---------------------------------------------------------------------
 try:
-    with revit.Transaction("Update Composite & Paint Costs (Safe)"):
+    with revit.Transaction("Update Composite & Paint Costs (Detailed)"):
 
-        for elem in type_collections:
+        for elem in type_elements:
             cost_param = elem.LookupParameter("Cost")
             if not cost_param or cost_param.IsReadOnly:
                 continue
@@ -91,41 +96,69 @@ try:
             if not tname or tname not in recipes:
                 continue
 
-            total = 0.0
+            total_cost = 0.0
             valid = True
+
             for mat, qty in recipes[tname].items():
                 if mat not in material_prices:
-                    missing.add(mat)
+                    missing_materials.add(mat)
+                    skipped[tname] = "missing material: {}".format(mat)
                     valid = False
                     break
-                total += qty * material_prices[mat]
+                total_cost += qty * material_prices[mat]
 
             if not valid:
-                skipped.append(tname)
                 continue
 
-            cost_param.Set(total)
-            updated.append((tname, total))
+            cost_param.Set(total_cost)
+            updated[tname] = total_cost
 
-        # Paint materials
+        # Paint / finishes
         for mat in materials:
             if mat.Name in material_prices:
                 p = mat.LookupParameter("Cost")
                 if p and not p.IsReadOnly:
                     p.Set(material_prices[mat.Name])
-                    paint_updated.append(mat.Name)
+                    paint_updated[mat.Name] = material_prices[mat.Name]
 
 except Exception:
-    forms.alert(traceback.format_exc(), title="Crash Guard")
+    forms.alert(traceback.format_exc(), title="Cost Update Failed")
     raise
 
 # ---------------------------------------------------------------------
-# SUMMARY
+# DETAILED SORTED SUMMARY
 # ---------------------------------------------------------------------
 summary = []
-summary.append("Updated Types: {}".format(len(updated)))
-summary.append("Updated Paint Materials: {}".format(len(paint_updated)))
-summary.append("Skipped Types: {}".format(len(skipped)))
-summary.append("Missing Materials: {}".format(len(missing)))
 
-forms.alert("\n".join(summary), title="Cost Update Complete")
+if updated:
+    summary.append("UPDATED TYPE COSTS:")
+    for name in sorted(updated):
+        summary.append("- {} : {:.2f} ZMW".format(name, updated[name]))
+
+if paint_updated:
+    summary.append("\nUPDATED PAINT / FINISH MATERIALS:")
+    for name in sorted(paint_updated):
+        summary.append("- {} : {:.2f} ZMW".format(name, paint_updated[name]))
+
+if skipped:
+    summary.append("\nSKIPPED TYPES:")
+    for name in sorted(skipped):
+        summary.append("- {} ({})".format(name, skipped[name]))
+
+if missing_materials:
+    summary.append("\nMISSING MATERIALS (NOT PRICED):")
+    for m in sorted(missing_materials):
+        summary.append("- " + m)
+
+if loaded_files:
+    summary.append("\nCSVs LOADED:")
+    for f in sorted(loaded_files):
+        summary.append("- " + f)
+
+if not summary:
+    summary = ["No matching types or materials found."]
+
+forms.alert(
+    "\n".join(summary),
+    title="Composite & Paint Cost Update"
+)
