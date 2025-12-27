@@ -31,7 +31,7 @@ for fname in os.listdir(csv_folder):
     loaded_files.append(fname)
 
 # ---------------------------------------------------------------------
-# Load recipes (materials + labour + transport)
+# Load recipes (materials + labour + transport + wastage)
 # ---------------------------------------------------------------------
 recipes = {}
 
@@ -42,7 +42,7 @@ with open(recipes_csv, "r") as f:
             comp = row["Component"].strip()
             qty = float(row["Quantity"]) if row["Quantity"] else 0.0
 
-            pct = row.get("Labour/Transport", "").strip()
+            pct = row.get("Labour/Transport/Wastage", "").strip()
             fixed = row.get("Labour/Transport_Fixed", "").strip()
             time_dist = row.get("Time/Distance", "").strip()
             rate = row.get("Rate", "").strip()
@@ -54,20 +54,25 @@ with open(recipes_csv, "r") as f:
                 "labour_time": [],
                 "transport_percent": 0.0,
                 "transport_fixed": [],
-                "transport_distance": []
+                "transport_distance": [],
+                "wastage_percent": 0.0,
             })
 
-            # Percentage-based
+            cname = comp.lower()
+
+            # Percentage-based (Labour / Transport / Wastage)
             if pct:
                 pct_val = float(pct.replace("%", "")) / 100.0
-                if comp.lower().startswith("transport"):
+                if "wastage" in cname or "shrinkage" in cname:
+                    recipes[rtype]["wastage_percent"] = pct_val
+                elif cname.startswith("transport"):
                     recipes[rtype]["transport_percent"] = pct_val
                 else:
                     recipes[rtype]["labour_percent"] = pct_val
 
             # Fixed
             elif fixed:
-                if comp.lower().startswith("transport"):
+                if cname.startswith("transport"):
                     recipes[rtype]["transport_fixed"].append(float(fixed))
                 else:
                     recipes[rtype]["labour_fixed"].append(float(fixed))
@@ -75,7 +80,7 @@ with open(recipes_csv, "r") as f:
             # Time / Distance based
             elif time_dist and rate:
                 cost = float(time_dist) * float(rate)
-                if comp.lower().startswith("transport"):
+                if cname.startswith("transport"):
                     recipes[rtype]["transport_distance"].append(cost)
                 else:
                     recipes[rtype]["labour_time"].append(cost)
@@ -135,12 +140,13 @@ missing_materials = set()
 paint_updated = {}
 labour_applied = {}
 transport_applied = {}
+wastage_applied = {}
 
 # ---------------------------------------------------------------------
 # TRANSACTION
 # ---------------------------------------------------------------------
 try:
-    with revit.Transaction("Update Composite & Paint Costs (Labour + Transport)"):
+    with revit.Transaction("Update Composite & Paint Costs (Labour + Transport + Wastage)"):
 
         for elem in type_elements:
             cost_param = elem.LookupParameter("Cost")
@@ -170,6 +176,8 @@ try:
             if not valid:
                 continue
 
+            wastage_cost = material_total * r["wastage_percent"]
+
             labour_cost = (
                 material_total * r["labour_percent"]
                 + sum(r["labour_fixed"])
@@ -182,12 +190,13 @@ try:
                 + sum(r["transport_distance"])
             )
 
-            total_cost = material_total + labour_cost + transport_cost
+            total_cost = material_total + wastage_cost + labour_cost + transport_cost
 
             cost_param.Set(total_cost)
             updated[tname] = total_cost
             labour_applied[tname] = labour_cost > 0
             transport_applied[tname] = transport_cost > 0
+            wastage_applied[tname] = wastage_cost > 0
 
         # Paint / finishes
         for mat in materials:
@@ -207,13 +216,15 @@ except Exception:
 summary = []
 
 if updated:
-    summary.append("UPDATED TYPE COSTS (INCL. LABOUR & TRANSPORT):")
+    summary.append("UPDATED TYPE COSTS (INCL. LABOUR, TRANSPORT & WASTAGE):")
     for name in sorted(updated):
         labels = []
         if labour_applied.get(name):
             labels.append("⚠️ Labour Inc.")
         if transport_applied.get(name):
             labels.append("🚚 Transpt Inc.")
+        if wastage_applied.get(name):
+            labels.append("♻️ Wastage Inc.")
         label = "  " + "  ".join(labels) if labels else ""
         summary.append("- {} : {:.2f} ZMW{}".format(name, updated[name], label))
 
