@@ -42,10 +42,11 @@ with open(recipes_csv, "r") as f:
             comp = row["Component"].strip()
             qty = float(row["Quantity"]) if row["Quantity"] else 0.0
 
-            # 🔹 RENAMED COLUMN (INTENTIONAL)
             pct = row.get("Labour/Transport/Wastage/Profit", "").strip()
 
-            fixed = row.get("Labour/Transport_Fixed", "").strip()
+            # 🔧 CHANGED: renamed CSV column
+            fixed = row.get("Labour/Transport/Plant_Fixed", "").strip()
+
             time_dist = row.get("Time/Distance", "").strip()
             rate = row.get("Rate", "").strip()
 
@@ -66,7 +67,7 @@ with open(recipes_csv, "r") as f:
                 "plant_fixed": [],
                 "plant_time": [],
 
-                "overhead_percent": 0.0,   # 🔹 NEW
+                "overhead_percent": 0.0,
             })
 
             cname = comp.lower()
@@ -89,7 +90,7 @@ with open(recipes_csv, "r") as f:
                     recipes[rtype]["labour_percent"] = pct_val
 
             # -----------------------------
-            # Fixed cost
+            # Fixed cost (Labour / Transport / Plant)
             # -----------------------------
             if fixed:
                 if cname.startswith("transport"):
@@ -171,7 +172,7 @@ labour_applied = {}
 transport_applied = {}
 plant_applied = {}
 wastage_applied = {}
-overhead_applied = {}  # 🔹 NEW
+overhead_applied = {}
 
 # ---------------------------------------------------------------------
 # TRANSACTION
