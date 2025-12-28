@@ -1,60 +1,151 @@
 # -*- coding: utf-8 -*-
-from pyrevit import revit, DB, forms
+"""
+Material List Generator
+- Reads recipes.csv
+- Multiplies material quantities by BOQ family quantities
+- Aggregates materials
+- Exports shopping-ready CSV
+Compatible with pyRevit / IronPython
+"""
 
-doc = revit.doc
-uidoc = revit.uidoc
+import csv
+import os
+from collections import defaultdict
 
-# Ask user for TYPE name
-search = forms.ask_for_string(
-    prompt="Enter TYPE name to highlight (e.g. Foundation walls_200mm):",
-    title="Search by TYPE Name"
+
+# ------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------
+
+BASE_DIR = os.path.dirname(__file__)
+
+RECIPES_CSV = os.path.join(
+    BASE_DIR,
+    "..",
+    "..",
+    "Rate.panel",
+    "Rate.pushbutton",
+    "recipes.csv"
 )
 
-if not search:
-    forms.alert("No TYPE name entered.")
-    raise SystemExit
+OUTPUT_CSV = os.path.join(BASE_DIR, "Material_List.csv")
 
-search = search.lower()
 
-# ---------------------------------------------
-# STEP 1: Find matching ELEMENT TYPES
-# ---------------------------------------------
-matching_type_ids = set()
+# ------------------------------------------------------------
+# GET BOQ ITEMS (PLACEHOLDER)
+# ------------------------------------------------------------
+def get_boq_items():
+    """
+    MUST return:
+    [
+        {"boq_item": "<Type>", "family_qty": <number>},
+        ...
+    ]
 
-type_collector = DB.FilteredElementCollector(doc).WhereElementIsElementType()
+    Replace this later with real BOQ extraction logic.
+    """
 
-for t in type_collector:
-    try:
-        if search in t.Name.lower():
-            matching_type_ids.add(t.Id)
-    except:
-        pass
+    # TEMP SAMPLE DATA — SAFE DEFAULT
+    return [
+        {"boq_item": "Foundation walls_200mm", "family_qty": 10},
+        {"boq_item": "Concrete_slab_100mm", "family_qty": 5},
+        {"boq_item": "Pad footing 1200x1200x300mm thick", "family_qty": 3},
+    ]
 
-if not matching_type_ids:
-    forms.alert("No matching TYPE names found.")
-    raise SystemExit
 
-# ---------------------------------------------
-# STEP 2: Find INSTANCES using those TYPES
-# ---------------------------------------------
-found_ids = []
+# ------------------------------------------------------------
+# READ RECIPES.CSV (MATCHES YOUR FILE EXACTLY)
+# ------------------------------------------------------------
+def read_recipes(csv_path):
+    recipes = defaultdict(list)
 
-inst_collector = DB.FilteredElementCollector(doc).WhereElementIsNotElementType()
+    with open(csv_path, "r") as f:
+        reader = csv.DictReader(f)
 
-for e in inst_collector:
-    try:
-        if e.GetTypeId() in matching_type_ids:
-            found_ids.append(e.Id)
-    except:
-        pass
+        for row in reader:
+            # Required columns from your file
+            boq_item = row.get("Type", "").strip()
+            component = row.get("Component", "").strip()
+            qty_raw = row.get("Quantity", "").strip()
 
-if not found_ids:
-    forms.alert("Type found, but no instances placed in model.")
-else:
-    uidoc.Selection.SetElementIds(found_ids)
-    uidoc.ShowElements(found_ids)
+            if not boq_item or not component or not qty_raw:
+                continue
 
-    forms.alert(
-        "Highlighted {} element(s).".format(len(found_ids)),
-        title="Search Result"
-    )
+            # Skip non-material rows
+            skip_words = [
+                "labour", "transport", "profit",
+                "wastage", "plant", "overhead", "hours"
+            ]
+
+            if any(w in component.lower() for w in skip_words):
+                continue
+
+            # Ignore percentage rows (e.g. 25%, 7%)
+            if "%" in qty_raw:
+                continue
+
+            try:
+                qty = float(qty_raw)
+            except:
+                continue
+
+            recipes[boq_item].append({
+                "material": component,
+                "qty_per_family": qty
+            })
+
+    return recipes
+
+
+# ------------------------------------------------------------
+# AGGREGATE MATERIALS
+# ------------------------------------------------------------
+def generate_material_list(boq_items, recipes):
+    material_totals = defaultdict(float)
+
+    for item in boq_items:
+        boq_name = item["boq_item"]
+        family_qty = item["family_qty"]
+
+        if boq_name not in recipes:
+            continue
+
+        for mat in recipes[boq_name]:
+            material_totals[mat["material"]] += (
+                mat["qty_per_family"] * family_qty
+            )
+
+    return material_totals
+
+
+# ------------------------------------------------------------
+# EXPORT TO CSV (EXCEL-READY)
+# ------------------------------------------------------------
+def export_to_csv(materials, output_path):
+    with open(output_path, "w") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Material", "Total Quantity"])
+
+        for material, qty in sorted(materials.items()):
+            writer.writerow([material, round(qty, 3)])
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+def main():
+    if not os.path.exists(RECIPES_CSV):
+        raise Exception("recipes.csv not found")
+
+    boq_items = get_boq_items()
+    recipes = read_recipes(RECIPES_CSV)
+
+    materials = generate_material_list(boq_items, recipes)
+    export_to_csv(materials, OUTPUT_CSV)
+
+    print("Material list generated successfully:")
+    print(OUTPUT_CSV)
+
+
+if __name__ == "__main__":
+    main()
