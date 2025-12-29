@@ -8,25 +8,21 @@ from Autodesk.Revit.DB import (
     FilterStringEquals,
     ParameterValueProvider,
     FilteredElementCollector,
-    View3D
+    View3D,
+    ViewDuplicateOption
 )
+from System.Collections.Generic import List
 
 doc = revit.doc
-view = doc.ActiveView
+uidoc = revit.uidoc
+active_view = doc.ActiveView
 
 # --------------------------------------------------
-# SAFETY CHECKS
+# BASIC VALIDATION
 # --------------------------------------------------
-if hasattr(view, 'IsTemporaryHideIsolateActive') and view.IsTemporaryHideIsolateActive():
+if not isinstance(active_view, View3D):
     forms.alert(
-        "Temporary Hide/Isolate is active.\n\n"
-        "Please reset it before running this tool.",
-        exitscript=True
-    )
-
-if not isinstance(view, View3D):
-    forms.alert(
-        "Please run this tool in a 3D View.",
+        "Please run this tool from a 3D View.",
         exitscript=True
     )
 
@@ -51,7 +47,6 @@ if not category_name:
     forms.alert("No category selected.", exitscript=True)
 
 category = cat_map[category_name]
-cat_ids = [category.Id]
 
 # --------------------------------------------------
 # TYPE NAME INPUT
@@ -73,11 +68,34 @@ isolate = forms.alert(
 )
 
 # --------------------------------------------------
-# PARAMETER PROVIDER
+# PARAMETER PROVIDER (Type Name)
 # --------------------------------------------------
 provider = ParameterValueProvider(
     ElementId(BuiltInParameter.SYMBOL_NAME_PARAM)
 )
+
+# --------------------------------------------------
+# CATEGORY IDS (.NET COLLECTION)
+# --------------------------------------------------
+cat_ids = List[ElementId]()
+cat_ids.Add(category.Id)
+
+# --------------------------------------------------
+# VIEW DUPLICATION
+# --------------------------------------------------
+with revit.Transaction("Duplicate QA View"):
+
+    new_view_id = active_view.Duplicate(ViewDuplicateOption.Duplicate)
+    qa_view = doc.GetElement(new_view_id)
+
+    qa_view.Name = "{} – TYPE QA – {} – {}".format(
+        active_view.Name,
+        category.Name,
+        type_name
+    )
+
+# Switch to QA view
+uidoc.ActiveView = qa_view
 
 # --------------------------------------------------
 # UNIQUE FILTER NAMES
@@ -86,11 +104,11 @@ show_filter_name = "TCC_SHOW_{}_{}".format(category.Name, type_name)
 hide_filter_name = "TCC_HIDE_{}_{}".format(category.Name, type_name)
 
 # --------------------------------------------------
-# TRANSACTION
+# APPLY FILTERS IN QA VIEW
 # --------------------------------------------------
-with revit.Transaction("Type Consistency Check"):
+with revit.Transaction("Apply Type Consistency Filters"):
 
-    # ---------- DELETE CONFLICTING FILTERS (2023 SAFE) ----------
+    # Remove conflicting filters (global, safe)
     existing_filters = FilteredElementCollector(doc).OfClass(ParameterFilterElement)
     for f in existing_filters:
         if f.Name in [show_filter_name, hide_filter_name]:
@@ -112,8 +130,8 @@ with revit.Transaction("Type Consistency Check"):
         ElementParameterFilter(show_rule)
     )
 
-    view.AddFilter(show_filter.Id)
-    view.SetFilterVisibility(show_filter.Id, True)
+    qa_view.AddFilter(show_filter.Id)
+    qa_view.SetFilterVisibility(show_filter.Id, True)
 
     # ---------- HIDE FILTER ----------
     if isolate == "Yes":
@@ -132,16 +150,15 @@ with revit.Transaction("Type Consistency Check"):
             ElementParameterFilter(hide_rule, True)  # inverted
         )
 
-        view.AddFilter(hide_filter.Id)
-        view.SetFilterVisibility(hide_filter.Id, False)
+        qa_view.AddFilter(hide_filter.Id)
+        qa_view.SetFilterVisibility(hide_filter.Id, False)
 
 # --------------------------------------------------
 # DONE
 # --------------------------------------------------
 forms.alert(
     "Type Consistency Check complete.\n\n"
-    "Category: {}\n"
-    "Expected Type: {}\n\n"
-    "Hidden elements indicate naming errors."
-    .format(category.Name, type_name)
+    "A QA view was created:\n\n{}\n\n"
+    "Hidden elements indicate naming inconsistencies."
+    .format(qa_view.Name)
 )
