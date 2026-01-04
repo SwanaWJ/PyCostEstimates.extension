@@ -7,14 +7,29 @@ from pyrevit import revit, DB, forms
 doc = revit.doc
 
 # ---------------------------------------------------------------------
+# Ask user which unit cost to use
+# ---------------------------------------------------------------------
+cost_choice = forms.SelectFromList.show(
+    ["Min_UnitCost", "Avg_UnitCost", "Max_UnitCost"],
+    title="Select Unit Cost Basis",
+    button_name="Use Selected Cost"
+)
+
+if not cost_choice:
+    forms.alert("No unit cost selected. Script cancelled.")
+    raise SystemExit
+
+
+# ---------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------
 script_dir = os.path.dirname(__file__)
 csv_folder = os.path.join(script_dir, "material_costs")
 recipes_csv = os.path.join(script_dir, "recipes.csv")
 
+
 # ---------------------------------------------------------------------
-# Load material prices
+# Load material prices (using selected cost column)
 # ---------------------------------------------------------------------
 material_prices = {}
 loaded_files = []
@@ -22,13 +37,23 @@ loaded_files = []
 for fname in os.listdir(csv_folder):
     if not fname.endswith(".csv"):
         continue
+
     with open(os.path.join(csv_folder, fname), "r") as f:
-        for row in csv.DictReader(f):
+        reader = csv.DictReader(f)
+        for row in reader:
             try:
-                material_prices[row["Item"].strip()] = float(row["UnitCost"])
+                item = row["Item"].strip()
+                val = row.get(cost_choice, "").strip()
+
+                if not item or not val:
+                    continue
+
+                material_prices[item] = float(val)
             except:
-                pass
+                continue
+
     loaded_files.append(fname)
+
 
 # ---------------------------------------------------------------------
 # Load recipes (materials + labour + transport + wastage + plant + profit)
@@ -43,10 +68,7 @@ with open(recipes_csv, "r") as f:
             qty = float(row["Quantity"]) if row["Quantity"] else 0.0
 
             pct = row.get("Labour/Transport/Wastage/Profit", "").strip()
-
-            # 🔧 CHANGED: renamed CSV column
             fixed = row.get("Labour/Transport/Plant_Fixed", "").strip()
-
             time_dist = row.get("Time/Distance", "").strip()
             rate = row.get("Rate", "").strip()
 
@@ -73,7 +95,7 @@ with open(recipes_csv, "r") as f:
             cname = comp.lower()
 
             # -----------------------------
-            # Percentage-based
+            # Percentage-based costs
             # -----------------------------
             if pct:
                 pct_val = float(pct.replace("%", "")) / 100.0
@@ -90,7 +112,7 @@ with open(recipes_csv, "r") as f:
                     recipes[rtype]["labour_percent"] = pct_val
 
             # -----------------------------
-            # Fixed cost (Labour / Transport / Plant)
+            # Fixed costs
             # -----------------------------
             if fixed:
                 if cname.startswith("transport"):
@@ -119,7 +141,8 @@ with open(recipes_csv, "r") as f:
                 recipes[rtype]["materials"][comp] = qty
 
         except:
-            pass
+            continue
+
 
 # ---------------------------------------------------------------------
 # SAFE CATEGORY COLLECTION
@@ -160,6 +183,7 @@ for cat in CATEGORIES:
 
 materials = list(DB.FilteredElementCollector(doc).OfClass(DB.Material))
 
+
 # ---------------------------------------------------------------------
 # Book-keeping
 # ---------------------------------------------------------------------
@@ -174,12 +198,13 @@ plant_applied = {}
 wastage_applied = {}
 overhead_applied = {}
 
+
 # ---------------------------------------------------------------------
 # TRANSACTION
 # ---------------------------------------------------------------------
 try:
     with revit.Transaction(
-        "Update Composite & Paint Costs (Labour + Transport + Wastage + Plant + Profit)"
+        "Update Composite & Paint Costs ({})".format(cost_choice)
     ):
 
         for elem in type_elements:
@@ -262,10 +287,12 @@ except Exception:
     forms.alert(traceback.format_exc(), title="Cost Update Failed")
     raise
 
+
 # ---------------------------------------------------------------------
 # SUMMARY
 # ---------------------------------------------------------------------
 summary = []
+summary.append("UNIT COST BASIS USED: {}\n".format(cost_choice))
 
 if updated:
     summary.append(
@@ -274,15 +301,15 @@ if updated:
     for name in sorted(updated):
         labels = []
         if labour_applied.get(name):
-            labels.append("⚠️ Labour Inc.")
+            labels.append("⚠ Labour")
         if transport_applied.get(name):
-            labels.append("🚚 Transpt Inc.")
+            labels.append("🚚 Transport")
         if plant_applied.get(name):
-            labels.append("🚜 Plant Inc.")
+            labels.append("🚜 Plant")
         if wastage_applied.get(name):
-            labels.append("♻️ Wastage Inc.")
+            labels.append("♻ Wastage")
         if overhead_applied.get(name):
-            labels.append("💼 Profit Inc.")
+            labels.append("💼 Profit")
 
         label = "  " + ", ".join(labels) if labels else ""
         summary.append("- {} : {:.2f} ZMW{}".format(name, updated[name], label))
