@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Material List Tool - Stages 1 to 4 (STABLE, FINAL)
+Material List Tool - Stages 1 to 5 (FINAL, CSV EXPORT)
 
-Stage 1: Extract model quantities from Revit
-Stage 2: Match recipes.csv (Type -> Component)
+Stage 1: Extract Revit quantities
+Stage 2: Match recipes.csv (Type → Component)
 Stage 3: Resolve unit costs from material_unit_costs.csv (Item)
 Stage 4: Calculate final quantities and total costs
+Stage 5: Export results to CSV (Excel-safe)
 """
 
 # ------------------------------------------------------------
-# PYREVIT OUTPUT + SAFE UI
+# PYREVIT OUTPUT + UI
 # ------------------------------------------------------------
 
 from pyrevit import script, forms
@@ -18,7 +19,7 @@ output = script.get_output()
 output.print_md("Material List script started")
 
 # ------------------------------------------------------------
-# SINGLE SAFE USER INPUT (ONE DIALOG ONLY)
+# USER INPUT (SAFE SINGLE DIALOG)
 # ------------------------------------------------------------
 
 provinces = [
@@ -113,12 +114,7 @@ def normalize(text):
 def norm_key(text):
     if not text:
         return ""
-    return (
-        text.lower()
-        .replace(" ", "")
-        .replace("-", "")
-        .replace("_", "")
-    )
+    return text.lower().replace(" ", "").replace("-", "").replace("_", "")
 
 def get_bic(elem):
     try:
@@ -153,7 +149,7 @@ def get_raw_quantity(elem, bic):
     return 1.0
 
 # ------------------------------------------------------------
-# STAGE 1 — EXTRACT MODEL DATA
+# STAGE 1 — EXTRACT MODEL QUANTITIES
 # ------------------------------------------------------------
 
 output.print_md("Stage 1: Extracting model quantities")
@@ -190,7 +186,6 @@ for elem in elements:
 
     model_data[type_name]["raw_qty"] += raw_qty
 
-# Convert Revit internal units
 for d in model_data.values():
     if d["unit"] == "m2":
         d["revit_quantity"] = UnitUtils.ConvertFromInternalUnits(
@@ -207,7 +202,7 @@ for d in model_data.values():
 output.print_md("Stage 1 complete")
 
 # ------------------------------------------------------------
-# STAGE 2 — MATCH RECIPES (CONTAINS MATCH)
+# STAGE 2 — MATCH RECIPES
 # ------------------------------------------------------------
 
 output.print_md("Stage 2: Matching recipes")
@@ -225,17 +220,17 @@ for r in csv.DictReader(text.splitlines()):
     except:
         pass
 
-for family_name, family_data in model_data.items():
-    fam_key = normalize(family_name)
+for fam, data in model_data.items():
+    fam_key = normalize(fam)
     for recipe_type, comps in recipes.items():
         if recipe_type in fam_key:
             for comp, qty in comps:
-                family_data["components"][comp] = {"recipe_qty": qty}
+                data["components"][comp] = {"recipe_qty": qty}
 
 output.print_md("Stage 2 complete")
 
 # ------------------------------------------------------------
-# STAGE 3 — RESOLVE UNIT COSTS (Item COLUMN)
+# STAGE 3 — RESOLVE UNIT COSTS (Item)
 # ------------------------------------------------------------
 
 output.print_md("Stage 3: Resolving unit costs")
@@ -250,9 +245,7 @@ for r in csv.DictReader(text.splitlines()):
         name = r.get("Item")
         if not name:
             continue
-
-        key = norm_key(name)
-        costs[key] = {
+        costs[norm_key(name)] = {
             "uom": r["UoM"],
             "unit_cost": float(r[cost_column])
         }
@@ -260,67 +253,65 @@ for r in csv.DictReader(text.splitlines()):
         pass
 
 priced = 0
-
-for family_data in model_data.values():
-    for comp_name, comp in family_data["components"].items():
-        lookup = norm_key(comp_name)
-        if lookup in costs:
-            comp["uom"] = costs[lookup]["uom"]
-            comp["unit_cost"] = costs[lookup]["unit_cost"]
+for data in model_data.values():
+    for comp, info in data["components"].items():
+        key = norm_key(comp)
+        if key in costs:
+            info.update(costs[key])
             priced += 1
 
 output.print_md("Stage 3 complete")
 output.print_md("Priced components: {}".format(priced))
 
 # ------------------------------------------------------------
-# STAGE 4 — FINAL QUANTITY & COST AGGREGATION
+# STAGE 4 — FINAL QUANTITIES & TOTALS
 # ------------------------------------------------------------
 
 output.print_md("Stage 4: Calculating final quantities and totals")
 
 final_materials = {}
 
-for family_name, family_data in model_data.items():
-    revit_qty = family_data.get("revit_quantity", 0.0)
+for data in model_data.values():
+    revit_qty = data["revit_quantity"]
     if revit_qty <= 0:
         continue
 
-    for comp_name, comp in family_data["components"].items():
-        recipe_qty = comp.get("recipe_qty", 0.0)
-        unit_cost = comp.get("unit_cost", 0.0)
-        uom = comp.get("uom", "")
+    for comp, info in data["components"].items():
+        final_qty = revit_qty * info.get("recipe_qty", 0.0)
 
-        final_qty = revit_qty * recipe_qty
+        final_materials.setdefault(comp, {
+            "uom": info.get("uom", ""),
+            "total_qty": 0.0,
+            "unit_cost": info.get("unit_cost", 0.0),
+            "total_cost": 0.0
+        })
 
-        if comp_name not in final_materials:
-            final_materials[comp_name] = {
-                "uom": uom,
-                "total_qty": 0.0,
-                "unit_cost": unit_cost,
-                "total_cost": 0.0
-            }
-
-        final_materials[comp_name]["total_qty"] += final_qty
-        final_materials[comp_name]["total_cost"] += final_qty * unit_cost
+        final_materials[comp]["total_qty"] += final_qty
+        final_materials[comp]["total_cost"] += final_qty * info.get("unit_cost", 0.0)
 
 output.print_md("Stage 4 complete")
 output.print_md("Total unique materials: {}".format(len(final_materials)))
 
 # ------------------------------------------------------------
-# SAFE PREVIEW (FIRST 5 MATERIALS)
+# STAGE 5 — EXPORT TO CSV (SAFE)
 # ------------------------------------------------------------
 
-output.print_md("Sample results:")
+output.print_md("Stage 5: Exporting material list to CSV")
 
-for i, (mat, data) in enumerate(final_materials.items()):
-    output.print_md(
-        "- {} | {} | Qty: {:.3f} | Unit: {:.2f} | Total: {:.2f}".format(
-            mat,
+desktop = os.path.join(os.environ["USERPROFILE"], "Desktop")
+csv_path = os.path.join(desktop, "Material_List.csv")
+
+with open(csv_path, "wb") as f:
+    f.write("Material,UoM,Total Quantity,Unit Cost,Total Cost\n")
+    for material, data in sorted(final_materials.items()):
+        line = "{},{},{:.3f},{:.2f},{:.2f}\n".format(
+            material.replace(",", " "),
             data["uom"],
             data["total_qty"],
             data["unit_cost"],
             data["total_cost"]
         )
-    )
-    if i == 4:
-        break
+        f.write(line)
+
+output.print_md("CSV export complete")
+output.print_md(csv_path)
