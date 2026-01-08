@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 
 """
-Material List Tool - Stages 1 to 5 (FINAL, CSV EXPORT)
-
+Material List Tool - FINAL
 Stage 1: Extract Revit quantities
 Stage 2: Match recipes.csv (Type → Component)
-Stage 3: Resolve unit costs from material_unit_costs.csv (Item)
-Stage 4: Calculate final quantities and total costs
-Stage 5: Export results to CSV (Excel-safe)
+Stage 3: Resolve unit costs (Item)
+Stage 4: Calculate quantities GROUPED BY TYPE
+Stage 5: Export grouped CSV (QS format)
 """
 
 # ------------------------------------------------------------
@@ -19,7 +18,7 @@ output = script.get_output()
 output.print_md("Material List script started")
 
 # ------------------------------------------------------------
-# USER INPUT (SAFE SINGLE DIALOG)
+# USER INPUT
 # ------------------------------------------------------------
 
 provinces = [
@@ -230,7 +229,7 @@ for fam, data in model_data.items():
 output.print_md("Stage 2 complete")
 
 # ------------------------------------------------------------
-# STAGE 3 — RESOLVE UNIT COSTS (Item)
+# STAGE 3 — RESOLVE UNIT COSTS
 # ------------------------------------------------------------
 
 output.print_md("Stage 3: Resolving unit costs")
@@ -252,66 +251,72 @@ for r in csv.DictReader(text.splitlines()):
     except:
         pass
 
-priced = 0
 for data in model_data.values():
     for comp, info in data["components"].items():
         key = norm_key(comp)
         if key in costs:
             info.update(costs[key])
-            priced += 1
 
 output.print_md("Stage 3 complete")
-output.print_md("Priced components: {}".format(priced))
 
 # ------------------------------------------------------------
-# STAGE 4 — FINAL QUANTITIES & TOTALS
+# STAGE 4 — FINAL QUANTITIES (GROUPED BY TYPE) ✅ FIX
 # ------------------------------------------------------------
 
-output.print_md("Stage 4: Calculating final quantities and totals")
+output.print_md("Stage 4: Calculating final quantities (grouped by type)")
 
-final_materials = {}
+grouped_materials = {}
 
-for data in model_data.values():
-    revit_qty = data["revit_quantity"]
-    if revit_qty <= 0:
+for type_name, data in model_data.items():
+    revit_qty = data["_toggle"] if False else data["revit_quantity"]
+    if revit_qty <= 0 or not data["components"]:
         continue
+
+    grouped_materials.setdefault(type_name, {})
 
     for comp, info in data["components"].items():
         final_qty = revit_qty * info.get("recipe_qty", 0.0)
 
-        final_materials.setdefault(comp, {
+        grouped_materials[type_name].setdefault(comp, {
             "uom": info.get("uom", ""),
             "total_qty": 0.0,
             "unit_cost": info.get("unit_cost", 0.0),
             "total_cost": 0.0
         })
 
-        final_materials[comp]["total_qty"] += final_qty
-        final_materials[comp]["total_cost"] += final_qty * info.get("unit_cost", 0.0)
+        grouped_materials[type_name][comp]["total_qty"] += final_qty
+        grouped_materials[type_name][comp]["total_cost"] += (
+            final_qty * info.get("unit_cost", 0.0)
+        )
 
 output.print_md("Stage 4 complete")
-output.print_md("Total unique materials: {}".format(len(final_materials)))
+output.print_md("Total types: {}".format(len(grouped_materials)))
 
 # ------------------------------------------------------------
-# STAGE 5 — EXPORT TO CSV (SAFE)
+# STAGE 5 — EXPORT GROUPED CSV
 # ------------------------------------------------------------
 
-output.print_md("Stage 5: Exporting material list to CSV")
+output.print_md("Stage 5: Exporting grouped material list to CSV")
 
 desktop = os.path.join(os.environ["USERPROFILE"], "Desktop")
-csv_path = os.path.join(desktop, "Material_List.csv")
+csv_path = os.path.join(desktop, "Material_List_Grouped.csv")
 
 with open(csv_path, "wb") as f:
-    f.write("Material,UoM,Total Quantity,Unit Cost,Total Cost\n")
-    for material, data in sorted(final_materials.items()):
-        line = "{},{},{:.3f},{:.2f},{:.2f}\n".format(
-            material.replace(",", " "),
-            data["uom"],
-            data["total_qty"],
-            data["unit_cost"],
-            data["total_cost"]
-        )
-        f.write(line)
+    for type_name, components in sorted(grouped_materials.items()):
+        f.write("{}\n".format(type_name))
+        f.write("Material,UoM,Total Quantity,Unit Cost,Total Cost\n")
+
+        for material, data in sorted(components.items()):
+            line = "{},{},{:.3f},{:.2f},{:.2f}\n".format(
+                material.replace(",", " "),
+                data["uom"],
+                data["total_qty"],
+                data["unit_cost"],
+                data["total_cost"]
+            )
+            f.write(line)
+
+        f.write("\n")
 
 output.print_md("CSV export complete")
 output.print_md(csv_path)
