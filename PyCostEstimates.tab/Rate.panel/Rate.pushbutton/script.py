@@ -38,11 +38,18 @@ cost_column = "{}_{}_UnitCost".format(province, cost_basis)
 national_column = "National_{}_UnitCost".format(cost_basis)
 
 # ---------------------------------------------------------------------
-# Paths
+# Paths (FIXED: single CSV, no folder)
 # ---------------------------------------------------------------------
 script_dir = os.path.dirname(__file__)
-csv_folder = os.path.join(script_dir, "material_costs")
+material_costs_csv = os.path.join(script_dir, "material_unit_costs.csv")
 recipes_csv = os.path.join(script_dir, "recipes.csv")
+
+if not os.path.exists(material_costs_csv):
+    forms.alert(
+        "Material unit cost file not found:\n\n{}".format(material_costs_csv),
+        title="Missing Material Cost File"
+    )
+    raise SystemExit
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -54,41 +61,35 @@ def is_valid_cost(value):
         return False
 
 # ---------------------------------------------------------------------
-# Load material prices (Province → National fallback, FIXED)
+# Load material prices (Province → National fallback)
 # ---------------------------------------------------------------------
 material_prices = {}
-material_price_source = {}   # material -> column used
+material_price_source = {}
 loaded_files = []
 
-for fname in os.listdir(csv_folder):
-    if not fname.endswith(".csv"):
-        continue
-
-    with open(os.path.join(csv_folder, fname), "r") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                item = row["Item"].strip()
-                if not item:
-                    continue
-
-                # 1️⃣ Try selected province
-                prov_val = row.get(cost_column, "")
-                if is_valid_cost(prov_val):
-                    material_prices[item] = float(prov_val)
-                    material_price_source[item] = cost_column
-                    continue
-
-                # 2️⃣ Fallback to National (Min / Avg / Max)
-                nat_val = row.get(national_column, "")
-                if is_valid_cost(nat_val):
-                    material_prices[item] = float(nat_val)
-                    material_price_source[item] = national_column
-
-            except:
+with open(material_costs_csv, "r") as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        try:
+            item = row["Item"].strip()
+            if not item:
                 continue
 
-    loaded_files.append(fname)
+            prov_val = row.get(cost_column, "")
+            if is_valid_cost(prov_val):
+                material_prices[item] = float(prov_val)
+                material_price_source[item] = cost_column
+                continue
+
+            nat_val = row.get(national_column, "")
+            if is_valid_cost(nat_val):
+                material_prices[item] = float(nat_val)
+                material_price_source[item] = national_column
+
+        except:
+            continue
+
+loaded_files.append(os.path.basename(material_costs_csv))
 
 # ---------------------------------------------------------------------
 # Load recipes (UNCHANGED)
@@ -201,7 +202,7 @@ for cat in CATEGORIES:
 materials = list(DB.FilteredElementCollector(doc).OfClass(DB.Material))
 
 # ---------------------------------------------------------------------
-# Book-keeping
+# Book-keeping (UNCHANGED)
 # ---------------------------------------------------------------------
 updated = {}
 skipped = {}
@@ -213,10 +214,10 @@ transport_applied = {}
 plant_applied = {}
 wastage_applied = {}
 overhead_applied = {}
-national_fallback_used = {}   # type -> National_Min / Avg / Max
+national_fallback_used = {}
 
 # ---------------------------------------------------------------------
-# TRANSACTION
+# TRANSACTION (RESTORED)
 # ---------------------------------------------------------------------
 try:
     with revit.Transaction(
@@ -309,7 +310,7 @@ except Exception:
     raise
 
 # ---------------------------------------------------------------------
-# SUMMARY (UNCHANGED EXCEPT CORRECT FALLBACK TAGGING)
+# SUMMARY (UNCHANGED)
 # ---------------------------------------------------------------------
 summary = []
 summary.append("UNIT COST COLUMN USED: {}\n".format(cost_column))

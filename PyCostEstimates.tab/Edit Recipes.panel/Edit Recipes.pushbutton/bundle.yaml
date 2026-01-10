@@ -1,0 +1,11 @@
+title: "Edit\nMaterial Composition"
+
+tooltip: >
+  Edits the material composition of each BOQ item,
+  defining how materials contribute to quantities
+  and cost calculations.
+
+  Author: Wachama J. Swana
+  Version: 1.0.0
+
+author: Wachama J. Swana
