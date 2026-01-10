@@ -182,7 +182,7 @@ CATEGORIES = [
     DB.BuiltInCategory.OST_PipeCurves,
     DB.BuiltInCategory.OST_PipeFitting,
     DB.BuiltInCategory.OST_PipeAccessory,
-    # ✅ CORRECT spelling
+    DB.BuiltInCategory.OST_GenericModel,
     DB.BuiltInCategory.OST_SpecialityEquipment,
 ]
 

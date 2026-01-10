@@ -1,234 +1,322 @@
 # -*- coding: utf-8 -*-
-"""
-Material List Generator (pyRevit / IronPython SAFE)
 
-- Reads recipes.csv
-- Matches BOQ items with recipes
-- Aggregates material quantities
-- Exports REAL .xlsx via Excel COM
+"""
+Material List Tool - FINAL
+Stage 1: Extract Revit quantities
+Stage 2: Match recipes.csv (Type → Component)
+Stage 3: Resolve unit costs (Item)
+Stage 4: Calculate quantities GROUPED BY TYPE
+Stage 5: Export grouped CSV (QS format)
 """
 
 # ------------------------------------------------------------
-# FORCE PYREVIT OUTPUT VISIBILITY
+# PYREVIT OUTPUT + UI
 # ------------------------------------------------------------
 
-from pyrevit import script
+from pyrevit import script, forms
 output = script.get_output()
-output.print_md("## Material List Script started")
+output.print_md("Material List script started")
+
+# ------------------------------------------------------------
+# USER INPUT
+# ------------------------------------------------------------
+
+provinces = [
+    "Central", "Copperbelt", "Eastern", "Luapula", "Lusaka",
+    "Muchinga", "Northern", "NorthWestern", "Southern",
+    "Western", "National"
+]
+
+cost_types = ["Min", "Avg", "Max"]
+choices = ["{} - {}".format(p, c) for p in provinces for c in cost_types]
+
+selection = forms.ask_for_one_item(
+    choices,
+    default="Central - Avg",
+    title="Select Province and Cost Type"
+)
+
+if not selection:
+    script.exit()
+
+province, cost_type = [x.strip() for x in selection.split("-")]
+cost_column = "{}_{}_UnitCost".format(province, cost_type)
+
+output.print_md("Pricing context selected")
+output.print_md("- Province: {}".format(province))
+output.print_md("- Cost type: {}".format(cost_type))
 
 # ------------------------------------------------------------
 # IMPORTS
 # ------------------------------------------------------------
 
-import csv
+from Autodesk.Revit.DB import *
+import System
 import os
+import csv
 from collections import defaultdict
 
+doc = __revit__.ActiveUIDocument.Document
+
 # ------------------------------------------------------------
-# CONFIG (SAFE PATHS)
+# FILE PATHS
 # ------------------------------------------------------------
 
-try:
-    BASE_DIR = os.path.dirname(__file__)
-except:
-    BASE_DIR = os.getcwd()
+BASE_DIR = os.path.dirname(__file__)
 
 RECIPES_CSV = os.path.abspath(os.path.join(
-    BASE_DIR,
-    "..",
-    "..",
-    "Rate.panel",
-    "Rate.pushbutton",
-    "recipes.csv"
+    BASE_DIR, "..", "..",
+    "Rate.panel", "Rate.pushbutton", "recipes.csv"
 ))
 
-DESKTOP = os.path.join(os.environ.get("USERPROFILE", ""), "Desktop")
-OUTPUT_XLSX = os.path.join(DESKTOP, "Material_List.xlsx")
+UNIT_COSTS_CSV = os.path.abspath(os.path.join(
+    BASE_DIR, "..", "..",
+    "Rate.panel", "Rate.pushbutton",
+    "material_costs", "material_unit_costs.csv"
+))
 
-output.print_md("**CSV path:** `{}`".format(RECIPES_CSV))
-output.print_md("**Output:** `{}`".format(OUTPUT_XLSX))
+# ------------------------------------------------------------
+# CATEGORY → UNIT MAP
+# ------------------------------------------------------------
+
+CATEGORY_UNIT_MAP = {
+    BuiltInCategory.OST_Walls: "m2",
+    BuiltInCategory.OST_Floors: "m3",
+    BuiltInCategory.OST_Roofs: "m2",
+    BuiltInCategory.OST_Ceilings: "m2",
+    BuiltInCategory.OST_Doors: "No",
+    BuiltInCategory.OST_Windows: "No",
+    BuiltInCategory.OST_StructuralColumns: "m3",
+    BuiltInCategory.OST_StructuralFraming: "m",
+    BuiltInCategory.OST_StructuralFoundation: "m3",
+    BuiltInCategory.OST_Conduit: "m",
+    BuiltInCategory.OST_PipeCurves: "m",
+    BuiltInCategory.OST_ElectricalFixtures: "No",
+    BuiltInCategory.OST_ElectricalEquipment: "No",
+    BuiltInCategory.OST_LightingFixtures: "No",
+    BuiltInCategory.OST_LightingDevices: "No",
+    BuiltInCategory.OST_PlumbingFixtures: "No",
+    BuiltInCategory.OST_PipeFitting: "No",
+    BuiltInCategory.OST_PipeAccessory: "No",
+    BuiltInCategory.OST_SpecialityEquipment: "No",
+}
+
+SUPPORTED_BICS = set(CATEGORY_UNIT_MAP.keys())
 
 # ------------------------------------------------------------
 # HELPERS
 # ------------------------------------------------------------
 
 def normalize(text):
+    return text.lower().strip() if text else ""
+
+def norm_key(text):
     if not text:
         return ""
-    return text.lower().replace("_", " ").strip()
+    return text.lower().replace(" ", "").replace("-", "").replace("_", "")
 
-# ------------------------------------------------------------
-# BOQ ITEMS (PLACEHOLDER)
-# ------------------------------------------------------------
-
-def get_boq_items():
-    return [
-        {"boq_item": "Foundation walls_200mm", "family_qty": 10},
-        {"boq_item": "Concrete_slab_100mm", "family_qty": 5},
-        {"boq_item": "Pad footing 1200x1200x300mm thick", "family_qty": 3},
-    ]
-
-# ------------------------------------------------------------
-# READ RECIPES CSV (IRONPYTHON SAFE)
-# ------------------------------------------------------------
-
-def read_recipes(csv_path):
-    if not os.path.exists(csv_path):
-        raise Exception("recipes.csv not found:\n{}".format(csv_path))
-
-    recipes = defaultdict(list)
-
-    with open(csv_path, "rb") as f:
-        raw = f.read()
-
-    raw = raw.replace(b"\x00", b"")
-
+def get_bic(elem):
     try:
-        text = raw.decode("utf-8")
+        return System.Enum.Parse(
+            BuiltInCategory,
+            str(elem.Category.Id.IntegerValue)
+        )
     except:
-        text = raw.decode("latin-1")
+        return None
 
-    reader = csv.DictReader(text.splitlines())
+def get_raw_quantity(elem, bic):
+    if bic == BuiltInCategory.OST_Walls:
+        p = elem.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED)
+        return p.AsDouble() if p else 0.0
 
-    for row in reader:
-        boq_item = normalize(row.get("Type", ""))
-        component = row.get("Component", "").strip()
-        qty_raw = row.get("Quantity", "").strip()
+    if bic in (
+        BuiltInCategory.OST_Floors,
+        BuiltInCategory.OST_StructuralFoundation,
+        BuiltInCategory.OST_StructuralColumns
+    ):
+        p = elem.get_Parameter(BuiltInParameter.HOST_VOLUME_COMPUTED)
+        return p.AsDouble() if p else 0.0
 
-        if not boq_item or not component or not qty_raw:
+    if bic in (
+        BuiltInCategory.OST_StructuralFraming,
+        BuiltInCategory.OST_PipeCurves,
+        BuiltInCategory.OST_Conduit
+    ):
+        p = elem.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH)
+        return p.AsDouble() if p else 0.0
+
+    return 1.0
+
+# ------------------------------------------------------------
+# STAGE 1 — EXTRACT MODEL QUANTITIES
+# ------------------------------------------------------------
+
+output.print_md("Stage 1: Extracting model quantities")
+
+model_data = {}
+
+elements = FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements()
+
+for elem in elements:
+    if not elem.Category:
+        continue
+
+    bic = get_bic(elem)
+    if bic not in SUPPORTED_BICS:
+        continue
+
+    elem_type = doc.GetElement(elem.GetTypeId())
+    if not elem_type:
+        continue
+
+    type_name = elem_type.get_Parameter(
+        BuiltInParameter.SYMBOL_NAME_PARAM
+    ).AsString()
+
+    unit = CATEGORY_UNIT_MAP[bic]
+    raw_qty = get_raw_quantity(elem, bic)
+
+    model_data.setdefault(type_name, {
+        "unit": unit,
+        "raw_qty": 0.0,
+        "revit_quantity": 0.0,
+        "components": {}
+    })
+
+    model_data[type_name]["raw_qty"] += raw_qty
+
+for d in model_data.values():
+    if d["unit"] == "m2":
+        d["revit_quantity"] = UnitUtils.ConvertFromInternalUnits(
+            d["raw_qty"], UnitTypeId.SquareMeters)
+    elif d["unit"] == "m3":
+        d["revit_quantity"] = UnitUtils.ConvertFromInternalUnits(
+            d["raw_qty"], UnitTypeId.CubicMeters)
+    elif d["unit"] == "m":
+        d["revit_quantity"] = UnitUtils.ConvertFromInternalUnits(
+            d["raw_qty"], UnitTypeId.Meters)
+    else:
+        d["revit_quantity"] = d["raw_qty"]
+
+output.print_md("Stage 1 complete")
+
+# ------------------------------------------------------------
+# STAGE 2 — MATCH RECIPES
+# ------------------------------------------------------------
+
+output.print_md("Stage 2: Matching recipes")
+
+recipes = defaultdict(list)
+
+with open(RECIPES_CSV, "rb") as f:
+    text = f.read().replace(b"\x00", b"").decode("utf-8", "ignore")
+
+for r in csv.DictReader(text.splitlines()):
+    try:
+        recipes[normalize(r["Type"])].append(
+            (r["Component"].strip(), float(r["Quantity"]))
+        )
+    except:
+        pass
+
+for fam, data in model_data.items():
+    fam_key = normalize(fam)
+    for recipe_type, comps in recipes.items():
+        if recipe_type in fam_key:
+            for comp, qty in comps:
+                data["components"][comp] = {"recipe_qty": qty}
+
+output.print_md("Stage 2 complete")
+
+# ------------------------------------------------------------
+# STAGE 3 — RESOLVE UNIT COSTS
+# ------------------------------------------------------------
+
+output.print_md("Stage 3: Resolving unit costs")
+
+costs = {}
+
+with open(UNIT_COSTS_CSV, "rb") as f:
+    text = f.read().replace(b"\x00", b"").decode("utf-8", "ignore")
+
+for r in csv.DictReader(text.splitlines()):
+    try:
+        name = r.get("Item")
+        if not name:
             continue
+        costs[norm_key(name)] = {
+            "uom": r["UoM"],
+            "unit_cost": float(r[cost_column])
+        }
+    except:
+        pass
 
-        if any(w in component.lower() for w in (
-            "labour", "transport", "profit",
-            "wastage", "plant", "overhead", "hours"
-        )):
-            continue
+for data in model_data.values():
+    for comp, info in data["components"].items():
+        key = norm_key(comp)
+        if key in costs:
+            info.update(costs[key])
 
-        if "%" in qty_raw:
-            continue
+output.print_md("Stage 3 complete")
 
-        try:
-            qty = float(qty_raw)
-        except:
-            continue
+# ------------------------------------------------------------
+# STAGE 4 — FINAL QUANTITIES (GROUPED BY TYPE) ✅ FIX
+# ------------------------------------------------------------
 
-        recipes[boq_item].append({
-            "material": component,
-            "qty_per_family": qty
+output.print_md("Stage 4: Calculating final quantities (grouped by type)")
+
+grouped_materials = {}
+
+for type_name, data in model_data.items():
+    revit_qty = data["_toggle"] if False else data["revit_quantity"]
+    if revit_qty <= 0 or not data["components"]:
+        continue
+
+    grouped_materials.setdefault(type_name, {})
+
+    for comp, info in data["components"].items():
+        final_qty = revit_qty * info.get("recipe_qty", 0.0)
+
+        grouped_materials[type_name].setdefault(comp, {
+            "uom": info.get("uom", ""),
+            "total_qty": 0.0,
+            "unit_cost": info.get("unit_cost", 0.0),
+            "total_cost": 0.0
         })
 
-    output.print_md("**Loaded recipe types:** {}".format(len(recipes)))
-    return recipes
+        grouped_materials[type_name][comp]["total_qty"] += final_qty
+        grouped_materials[type_name][comp]["total_cost"] += (
+            final_qty * info.get("unit_cost", 0.0)
+        )
+
+output.print_md("Stage 4 complete")
+output.print_md("Total types: {}".format(len(grouped_materials)))
 
 # ------------------------------------------------------------
-# AGGREGATE MATERIALS
+# STAGE 5 — EXPORT GROUPED CSV
 # ------------------------------------------------------------
 
-def generate_material_list(boq_items, recipes):
-    totals = defaultdict(float)
-    output.print_md("### Matching BOQ → Recipes")
+output.print_md("Stage 5: Exporting grouped material list to CSV")
 
-    for item in boq_items:
-        name_raw = item["boq_item"]
-        name = normalize(name_raw)
-        family_qty = item["family_qty"]
+desktop = os.path.join(os.environ["USERPROFILE"], "Desktop")
+csv_path = os.path.join(desktop, "Material_List_Grouped.csv")
 
-        if name not in recipes:
-            output.print_md("⚠️ No recipe for `{}`".format(name_raw))
-            continue
+with open(csv_path, "wb") as f:
+    for type_name, components in sorted(grouped_materials.items()):
+        f.write("{}\n".format(type_name))
+        f.write("Material,UoM,Total Quantity,Unit Cost,Total Cost\n")
 
-        for mat in recipes[name]:
-            totals[mat["material"]] += mat["qty_per_family"] * family_qty
+        for material, data in sorted(components.items()):
+            line = "{},{},{:.3f},{:.2f},{:.2f}\n".format(
+                material.replace(",", " "),
+                data["uom"],
+                data["total_qty"],
+                data["unit_cost"],
+                data["total_cost"]
+            )
+            f.write(line)
 
-    return totals
+        f.write("\n")
 
-# ------------------------------------------------------------
-# EXPORT TO EXCEL (FIXED FOR YOUR OFFICE INSTALL)
-# ------------------------------------------------------------
-
-def export_to_xlsx(materials, output_path):
-    output.print_md("### Exporting to Excel...")
-
-    import clr
-    import System
-    clr.AddReference("Microsoft.Office.Interop.Excel")
-    clr.AddReference("System.Runtime.InteropServices")
-
-    from Microsoft.Office.Interop.Excel import ApplicationClass
-    from System.Runtime.InteropServices import Marshal
-
-    excel = workbook = sheet = None
-
-    try:
-        # 🔑 REQUIRED on your machine
-        excel = ApplicationClass()
-        excel.Visible = False
-        excel.DisplayAlerts = False
-
-        workbook = excel.Workbooks.Add()
-        sheet = workbook.Worksheets[1]
-        sheet.Name = "Material List"
-
-        # Headers
-        sheet.Cells(1, 1).Value2 = "Material"
-        sheet.Cells(1, 2).Value2 = "Total Quantity"
-        sheet.Range("A1:B1").Font.Bold = True
-
-        row = 2
-        for material, qty in sorted(materials.items()):
-            sheet.Cells(row, 1).Value2 = material
-            sheet.Cells(row, 2).Value2 = round(qty, 3)
-            row += 1
-
-        sheet.Columns("A:B").AutoFit()
-        workbook.SaveAs(output_path, 51)
-
-        output.print_md("✅ Excel saved successfully")
-
-    finally:
-        # 🔴 CLEANUP ORDER IS CRITICAL
-        if sheet:
-            Marshal.ReleaseComObject(sheet)
-            sheet = None
-
-        if workbook:
-            workbook.Close(False)
-            Marshal.ReleaseComObject(workbook)
-            workbook = None
-
-        if excel:
-            excel.Quit()
-            Marshal.ReleaseComObject(excel)
-            excel = None
-
-        # Prevent Revit freeze
-        System.GC.Collect()
-        System.GC.WaitForPendingFinalizers()
-        System.GC.Collect()
-
-# ------------------------------------------------------------
-# MAIN
-# ------------------------------------------------------------
-
-def main():
-    boq_items = get_boq_items()
-    recipes = read_recipes(RECIPES_CSV)
-    materials = generate_material_list(boq_items, recipes)
-
-    if not materials:
-        output.print_md("❌ No materials generated")
-        return
-
-    export_to_xlsx(materials, OUTPUT_XLSX)
-    output.print_md("## 🎉 DONE")
-
-# ------------------------------------------------------------
-# ENTRY POINT
-# ------------------------------------------------------------
-
-try:
-    main()
-except Exception as e:
-    output.print_md("## ❌ SCRIPT FAILED")
-    output.print_md("```\n{}\n```".format(str(e)))
-    raise
+output.print_md("CSV export complete")
+output.print_md(csv_path)
