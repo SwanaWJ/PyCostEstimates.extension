@@ -1,5 +1,6 @@
 # test commit template
 layout:
+  - About
   - Unit Costs1
   - Edit Recipes
   - Rate
