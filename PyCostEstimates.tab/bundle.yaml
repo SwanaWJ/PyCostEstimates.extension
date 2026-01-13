@@ -1,10 +1,8 @@
 # test commit template
 layout:
-  - About
-  - Unit Costs1
-  - Edit Recipes
-  - Rate
-  - Type Consisteny Check
-  - Amount
-  - Generate BOQ
-  - Grand Total 
+  - Info
+  - Build
+  - Check
+  - Update
+  - Export
+  
