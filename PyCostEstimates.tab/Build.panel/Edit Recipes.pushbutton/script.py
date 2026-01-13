@@ -1,35 +1,40 @@
 import os
-import subprocess
-from pyrevit import script
+from pyrevit import forms
 
 # -----------------------------------------------------------------------------
-# Resolve recipes.csv path
+# Resolve extension root
 # -----------------------------------------------------------------------------
 script_dir = os.path.dirname(__file__)
 
-recipes_csv = os.path.abspath(
-    os.path.join(
-        script_dir,
-        "..", "..",
-        "Rate.panel",
-        "Rate.pushbutton",
-        "recipes.csv"
-    )
+extension_root = os.path.abspath(
+    os.path.join(script_dir, "..", "..", "..")
 )
 
 # -----------------------------------------------------------------------------
-# Fail silently if missing (Revit-safe)
+# Path to the SHARED recipes.csv
 # -----------------------------------------------------------------------------
-if not os.path.exists(recipes_csv):
-    script.exit()
+recipes_csv = os.path.join(
+    extension_root,
+    "PyCostEstimates.tab",
+    "Update.panel",
+    "Apply Rate.pushbutton",
+    "recipes.csv"
+)
 
 # -----------------------------------------------------------------------------
-# Simple debounce: do not relaunch if Excel already has it open
+# Open CSV safely
 # -----------------------------------------------------------------------------
-try:
-    subprocess.Popen(
-        ["cmd", "/c", "start", "", recipes_csv],
-        shell=False
+if not os.path.exists(recipes_csv):
+    forms.alert(
+        "recipes.csv not found at:\n\n{}".format(recipes_csv),
+        warn_icon=True
     )
-except Exception:
-    pass
+else:
+    try:
+        os.startfile(recipes_csv)
+    except Exception as e:
+        forms.alert(
+            "Failed to open recipes.csv:\n\n{}\n\n{}"
+            .format(recipes_csv, str(e)),
+            warn_icon=True
+        )
