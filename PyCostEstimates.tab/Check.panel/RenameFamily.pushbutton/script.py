@@ -9,7 +9,8 @@ doc = revit.doc
 # --------------------------------------------------
 # CONFIG
 # --------------------------------------------------
-CSV_COLUMN = "Type"   # matches your CSV exactly
+CSV_COLUMN = "Type"   # must match CSV header exactly
+ONLY_USED_TYPES = True  # set to False to show all model types
 
 # --------------------------------------------------
 # LOCATE SHARED CSV
@@ -50,7 +51,7 @@ with open(csv_file, "r") as f:
         if val:
             csv_names.append(val.strip())
 
-# remove duplicates, keep order
+# Remove duplicates, keep order
 seen = set()
 csv_names = [n for n in csv_names if not (n in seen or seen.add(n))]
 
@@ -58,7 +59,23 @@ if not csv_names:
     forms.alert("No valid names found in CSV.", exitscript=True)
 
 # --------------------------------------------------
-# COLLECT FAMILY TYPES (SAFE NAME ACCESS)
+# COLLECT USED TYPE IDS (OPTIONAL BUT RECOMMENDED)
+# --------------------------------------------------
+used_type_ids = set()
+
+if ONLY_USED_TYPES:
+    for el in (
+        FilteredElementCollector(doc)
+        .WhereElementIsNotElementType()
+        .ToElements()
+    ):
+        try:
+            used_type_ids.add(el.GetTypeId())
+        except:
+            pass
+
+# --------------------------------------------------
+# COLLECT VALID MODEL FAMILY TYPES ONLY
 # --------------------------------------------------
 symbols = (
     FilteredElementCollector(doc)
@@ -67,24 +84,50 @@ symbols = (
     .ToElements()
 )
 
-if not symbols:
-    forms.alert("No family types found in model.", exitscript=True)
-
 def get_type_name(symbol):
     p = symbol.get_Parameter(BuiltInParameter.SYMBOL_NAME_PARAM)
-    return p.AsString() if p else "<Unnamed>"
+    return p.AsString() if p else None
 
 family_dict = {}
 used_names = set()
 
 for s in symbols:
-    name = get_type_name(s)
-    key = "{} : {}".format(s.Family.Name, name)
+    cat = s.Category
+    fam = s.Family
+
+    # Skip invalid categories
+    if not cat:
+        continue
+
+    # ❌ Exclude annotation families
+    if cat.CategoryType != CategoryType.Model:
+        continue
+
+    # ❌ Exclude tag categories explicitly
+    if cat.IsTagCategory:
+        continue
+
+    # ❌ Skip unused types if configured
+    if ONLY_USED_TYPES and s.Id not in used_type_ids:
+        continue
+
+    type_name = get_type_name(s)
+    if not type_name:
+        continue
+
+    key = "{} : {}".format(fam.Name, type_name)
     family_dict[key] = s
-    used_names.add(name)
+    used_names.add(type_name)
+
+if not family_dict:
+    forms.alert(
+        "No valid model family types found.\n"
+        "Annotation and unused types are excluded.",
+        exitscript=True
+    )
 
 # --------------------------------------------------
-# INTERACTIVE RENAME LOOP (100% SAFE)
+# INTERACTIVE RENAME LOOP
 # --------------------------------------------------
 with revit.Transaction("Rename Family Types from Shared CSV"):
 
@@ -130,7 +173,7 @@ with revit.Transaction("Rename Family Types from Shared CSV"):
 
         name_param.Set(csv_name)
 
-        # update state
+        # Update state
         used_names.add(csv_name)
         csv_names.remove(csv_name)
         family_dict.pop(fam_key)
