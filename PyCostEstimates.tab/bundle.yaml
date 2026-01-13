@@ -1,6 +1,6 @@
 # test commit template
 layout:
-  - Info
+  - About
   - Build
   - Check
   - Update
