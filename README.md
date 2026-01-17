@@ -1,84 +1,232 @@
-#  pyRevit Cost Estimates Extension
+# PyCostEstimates (pyRevit Extension)
 
-Automate quantity takeoffs and cost estimation inside Autodesk Revit with **pyRevit**.  
-This extension reduces manual work by directly populating costs, generating Bills of Quantities (BOQs), and calculating totals from your model.
+**PyCostEstimates** is a **pyRevit extension** that automates **quantity takeoff, material costing, and Bill of Quantities (BOQ) generation** directly inside **Autodesk Revit**.
+
+Instead of relying on manual takeoff, schedules, and spreadsheets, costs are **calculated directly from the model**, kept **consistent**, and **exported in a single workflow**.
+
+![Demo GIF](assets/PyCostEstimates_Demo.gif)
+
+---
+
+## What This Extension Does (In Simple Terms)
+
+- Adds a **PyCostEstimates** tab to the Revit ribbon
+- Reads quantities directly from the model
+- Applies material and unit costs automatically
+- Generates BOQs and material schedules ready for tendering and procurement
+- Keeps family and material costs consistent across the project
 
 ---
 
-##  Features
+## PyCostEstimates Ribbon Overview
 
-- **Amount Population**: Automatically populate unit cost parameters (e.g., `Test_1234`) based on category.  
-- **Generate BOQ**: Export structured cost breakdowns to Excel.  
-- **Grand Total**: Summarize costs across all categories.  
-- **Update Family Cost**: Sync family cost data using a CSV-based material pricing database.  
+After installation, you will see a new ribbon tab:
+
+**PyCostEstimates**
+
+The tools are grouped into logical panels:
+
+### 1. Setup and Validation
+- **Create Parameters**
+- **Type Consistency Check**
+
+### 2. Cost Definition
+- **Edit Material Unit Costs**
+- **Edit Material Buildup**
+- **Rename Family Types**
+- **Search Family Type**
+
+### 3. Cost Calculation
+- **Apply Rate**
+- **Compute Amount**
+
+### 4. BOQ and Export
+- **BOQ Description**
+- **Export BOQ**
+- **Preview Total**
+- **Export Material Schedule**
 
 ---
-## Quick start (using the sample project)
-1. Open: `assets/Sample test project.rvt`
-2. In pyRevit, run: **Cost Update** → **Amount** → **Generate BOQ**  
-   Your BOQ will be generated in three clicks.
 
-## Update material unit costs
-You can change unit prices directly from the panel:
+## Recommended Workflow (End-to-End)
 
-1. **Press & hold `ALT`** and click **Cost Update** panel.  
-2. Navigate to: `Multi csv` → `material costs/`  
-3. Edit either file:
-   - `material_unit_costs.csv`
-   - `material_unit_cost2.csv`
-4. Save your changes and re-run **Cost Update**.
+Follow these steps **in order** for best results.
 
-> The sample project’s families are named to match the CSVs so updates apply immediately.
+---
 
-## Recipes (combine materials for composite costs)
-Under the **Cost** panel, open **recipes**.  
-This is where you define composite items by combining materials.  
-**Example (Concrete):** cement + quarry dust + crushed stones + water + labor → concrete rate.
+## Step 1 - Create Required Parameters
 
-Once **recipes** and **material costs** are set, just:
-1) **Cost Update** → 2) **Amount** → 3) **Generate BOQ** 
+**Button:** Create Parameters
 
-## Demo & test files
+This creates all shared parameters required for costing, such as:
+- Unit Rate
+- Amount
+- Material Cost
+- BOQ Description
 
-- Sample project: [assets/Sample test project.rvt](assets/Sample%20test%20project.rvt)
-- Demo GIF:  
-  ![Demo GIF](assets/PyCostEstimate_Demo_HD.gif)
-- Demo video: [assets/PyCostEstimate Demo video.mp4](assets/PyCostEstimate%20Demo%20video.mp4)
+> Run this **once per project** (or when loading new families).
 
+---
 
-## Roadmap: live prices (no manual updates)
-I’m building a web scraper that pulls **real-time prices from hardware websites**, packages them into a JSON file, and feeds the extension automatically—removing manual CSV updates.  
-Preview data here: https://github.com/SwanaWJ/family-cost-data
+## Step 2 - Ensure Family Type Consistency
 
-## Supported Categories
+**Button:** Type Consistency Check
 
-The extension currently supports BOQ export and cost updates for the following Revit categories:
+This tool:
+- Checks that families follow naming and typing rules
+- Prevents duplicate or mismatched cost entries
+- Avoids BOQ errors later
 
-| Category                  | Unit of Measurement |
-|----------------------------|---------------------|
-| Structural Foundations     | m³                  |
-| Block Work in Walls        | m²                  |
-| Structural Columns         | m³ / m (by material)|
-| Structural Framing         | m                   |
-| Structural Rebar           | m                   |
-| Roofs                      | m²                  |
-| Windows                    | No.                 |
-| Doors                      | No.                 |
-| Electrical                 | No.                 |
-| Plumbing                   | No.                 |
-| Wall and Floor Finishes    | m²                  |
+> Strongly recommended before applying costs.
 
+---
 
-##  Installation
+## Step 3 - Edit Material Unit Costs
 
-1. Make sure you have **[pyRevit installed](https://github.com/eirannejad/pyRevit/releases)**.  
-2. Download **pyRevit Cost Estimates** from:  
-    https://github.com/SwanaWJ/pyrevit-CostEstimates/archive/refs/heads/main.zip 
-3. In Revit, go to the **pyRevit tab** → look at the **left-most panel** → click the small **drop-down arrow** (menu opens).  
-4. Select **Settings** (pyRevit settings window opens).  
-5. Navigate to **Add Folder** → browse to the folder where you downloaded/cloned `pyrevit-CostEstimates`.  
-6. Click **Save Settings** and then **Reload**.  
+**Button:** Edit Material Unit Costs
 
- You should now see a new tab named **PyCostEstimates** in your Revit ribbon.
+This opens the CSV-based pricing database.
 
-Good lucky!
+### How it works
+- Each material has a unit rate (m^2 / m^3 / No.)
+- Costs are stored in CSV files
+- Families are mapped to materials by name
+
+Edit the CSV -> Save -> Re-run cost tools.
+
+---
+
+## Step 4 - Define Composite Costs (Material Buildup)
+
+**Button:** Edit Material Buildup
+
+This is where **recipes** live.
+
+### Example: Concrete
+
+Concrete is calculated from:
+- Cement
+- Quarry dust
+- Crushed stones
+- Water
+- Labor
+
+You define these once, and the extension calculates the **final composite rate automatically**.
+
+> This is the key feature that eliminates manual rate analysis.
+
+---
+
+## Step 5 - Rename and Manage Family Types (Optional but Powerful)
+
+- **Rename Family Types** - standardize naming for cost matching
+- **Search Family Type** - quickly locate families across the project
+
+This ensures:
+- CSV material names match Revit families
+- Costs apply correctly without manual overrides
+
+---
+
+## Step 6 - Apply Rates to the Model
+
+**Button:** Apply Rate
+
+This step:
+- Reads material and recipe data
+- Writes unit rates into the model
+- Applies rates per category (walls, slabs, columns, etc.)
+
+No schedules required.
+
+---
+
+## Step 7 - Compute Amounts
+
+**Button:** Compute Amount
+
+This step:
+- Multiplies **quantity x unit rate**
+- Writes final amounts into parameters
+- Prepares the model for BOQ export
+
+> This is where the actual money gets calculated.
+
+---
+
+## Step 8 - Generate BOQ and Totals
+
+### BOQ Description
+Adds readable descriptions per item.
+
+### Export BOQ
+Exports a clean Excel BOQ containing:
+- Item
+- Description
+- Unit
+- Quantity
+- Rate
+- Amount
+
+### Preview Total
+Shows the grand total cost directly in Revit.
+
+### Export Material Schedule
+Exports material-level schedules for auditing or procurement.
+
+---
+
+## Quick Start (Sample Project)
+
+1. Open:
+assets/Sample test project.rvt
+
+2. Run the tools in this order:
+1. Create Parameters
+2. Apply Rate
+3. Compute Amount
+4. Export BOQ
+
+Your BOQ is generated in **minutes, not hours**.
+
+---
+
+## Supported Revit Categories
+
+| Category               | Unit    |
+|------------------------|---------|
+| Structural Foundations | m^3     |
+| Structural Columns     | m^3 / m |
+| Structural Framing     | m       |
+| Structural Rebar       | m       |
+| Blockwork Walls        | m^2     |
+| Roofs                  | m^2     |
+| Wall Finishes          | m^2     |
+| Floor Finishes         | m^2     |
+| Doors                  | No.     |
+| Windows                | No.     |
+| Electrical             | No. / m |
+| Plumbing               | No. / m |
+
+---
+
+## Installation
+
+1. Install **pyRevit**  
+https://github.com/eirannejad/pyRevit/releases
+
+2. Download this repository:  
+https://github.com/SwanaWJ/pyrevit-CostEstimates/archive/refs/heads/main.zip
+
+3. In Revit -> **pyRevit tab** -> left-most drop-down  
+4. Open **Settings**  
+5. Click **Add Folder** -> select `pyrevit-CostEstimates`  
+6. Click **Save Settings** -> **Reload**
+
+You will now see **PyCostEstimates** in the Revit ribbon.
+
+---
+
+## License
+
+MIT License (c) 2025 Swana WJ
